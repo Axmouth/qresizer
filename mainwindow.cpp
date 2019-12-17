@@ -1,19 +1,21 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include <QDebug>
+#include <QDir>
+#include <QDirIterator>
 #include <QFileDialog>
 #include <QImage>
-#include <QDir>
-#include <QDebug>
 #include <QMessageBox>
-#include <QDirIterator>
 #include <QStack>
-#include <imageextensionsselectdialog.h>
+#include <QtConcurrent/QtConcurrent>
 #include <constants.h>
+#include <imageextensionsselectdialog.h>
 
-QList<QString> findFilesRecursively(QDir rootDir) {
+QList<QString> findFilesRecursively(QDir rootDir)
+{
     QStack<QString> filenames;
     QDirIterator it(rootDir, QDirIterator::Subdirectories);
-    while(it.hasNext()) {
+    while (it.hasNext()) {
         QString filename = it.next();
         qDebug() << filename;
         filenames.push(filename);
@@ -22,7 +24,7 @@ QList<QString> findFilesRecursively(QDir rootDir) {
     return filenames.toList();
 }
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
@@ -30,6 +32,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     qRegisterMetaType<QList<QString>>("QList<QString>");
     qRegisterMetaTypeStreamOperators<QList<QString>>("QList<QString>");
+
+    ui->lineEdit_selectImages->setReadOnly(true);
+    ui->lineEdit_selectOutputFolder->setReadOnly(true);
+    ui->label_status->setVisible(false);
 
     QSettings MySettings;
     ui->lineEdit_selectOutputFolder->setText(MySettings.value(DEFAULT_OUTPUT_DIR_SETTINGS_KEY, DEFAULT_OUTPUT_DIR_SETTINGS_KEY).toString());
@@ -44,13 +50,16 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->pushButton_selectImages, &QPushButton::clicked, this, &MainWindow::selectImages);
     connect(ui->pushButton_selectOutputFolder, &QPushButton::clicked, this, &MainWindow::selectOutputFolder);
-    connect(ui->pushButton_Resize, &QPushButton::clicked, this, &MainWindow::resizeImage);
+    connect(ui->pushButton_Resize, &QPushButton::clicked, this, &MainWindow::resizeImages);
     connect(ui->checkBox_keepAspectRatio, &QCheckBox::toggled, this, &MainWindow::toggleKeepAspectRatio);
     connect(ui->checkBox_convertToJPEG, &QCheckBox::toggled, this, &MainWindow::toggleConvertToJPEG);
     connect(ui->checkBox_useInputFolder, &QCheckBox::toggled, this, &MainWindow::toggleUseInputFolder);
     connect(ui->spinBox_targetHeight, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::onHeightChange);
     connect(ui->spinBox_targetWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::onWidthChange);
     connect(ui->actionImage_Extensions, &QAction::triggered, this, &MainWindow::optionsImageExtensionsSelect);
+
+    connect(this, &MainWindow::targetResized, this, &MainWindow::resizeJobProgress);
+    connect(this, &MainWindow::resizeJobDone, this, &MainWindow::endResizeJob);
 
     ui->progressBar_converting->setVisible(false);
 }
@@ -66,18 +75,19 @@ void MainWindow::selectImages()
 
     QList<QString> SelectedFiles;
     QString SelectedFolder = "";
+    QString lineEditText = "";
 
     if (!ui->checkBox_useInputFolder->isChecked()) {
-        SelectedFiles = QFileDialog::getOpenFileNames(this, "Select input images", \
-MySettings.value(IMAGE_SELECT_DIR_SETTINGS_KEY, DEFAULT_IMAGE_SELECT_DIR).toString(), tr("Images (*." + \
-MySettings.value(IMAGE_EXTENSIONS_SETTINGS_KEY, QVariant::fromValue(DEFAULT_IMAGE_EXTENSIONS)).value<QList<QString>>().join(" ").toLocal8Bit() \
-+ ");;All files (*.*)"));
+        SelectedFiles = QFileDialog::getOpenFileNames(this, "Select input images",
+            MySettings.value(IMAGE_SELECT_DIR_SETTINGS_KEY, DEFAULT_IMAGE_SELECT_DIR).toString(), tr("Images (*." + MySettings.value(IMAGE_EXTENSIONS_SETTINGS_KEY, QVariant::fromValue(DEFAULT_IMAGE_EXTENSIONS)).value<QList<QString>>().join(" *.").toLocal8Bit() + ");;All files (*.*)"));
 
         if (!SelectedFiles.isEmpty()) {
             QDir CurrentDir;
-            SelectedFolder = CurrentDir.absoluteFilePath(SelectedFiles[0]);
-            MySettings.setValue(IMAGE_SELECT_DIR_SETTINGS_KEY, CurrentDir.absoluteFilePath(SelectedFiles[0]));
+            QFileInfo fi(SelectedFiles[0]);
+            SelectedFolder = fi.absoluteDir().path();
+            MySettings.setValue(IMAGE_SELECT_DIR_SETTINGS_KEY, CurrentDir.absoluteFilePath(SelectedFolder));
         }
+        lineEditText = SelectedFiles.join(" ");
     } else {
         SelectedFolder = QFileDialog::getExistingDirectory(this, "Select input folder", MySettings.value(IMAGE_SELECT_DIR_SETTINGS_KEY, DEFAULT_IMAGE_SELECT_DIR).toString());
 
@@ -90,10 +100,10 @@ MySettings.value(IMAGE_EXTENSIONS_SETTINGS_KEY, QVariant::fromValue(DEFAULT_IMAG
         selectedDir.setNameFilters(qsl);
         SelectedFiles = findFilesRecursively(selectedDir);
         MySettings.setValue(IMAGE_SELECT_DIR_SETTINGS_KEY, SelectedFolder);
+        lineEditText = SelectedFolder;
     }
 
-    if (SelectedFiles.isEmpty())
-    {
+    if (SelectedFiles.isEmpty()) {
         return;
     }
 
@@ -105,7 +115,9 @@ MySettings.value(IMAGE_EXTENSIONS_SETTINGS_KEY, QVariant::fromValue(DEFAULT_IMAG
     QList<QString> filenames = SelectedFiles;
     inputImages = filenames;
     qDebug() << SelectedFiles.count();
-    ui->lineEdit_selectImages->setText(SelectedFolder);
+    ui->label_status->setVisible(true);
+    ui->label_status->setText(QString::number(inputImages.count()) + " images have been selected.");
+    ui->lineEdit_selectImages->setText(lineEditText);
 }
 
 void MainWindow::selectOutputFolder()
@@ -114,8 +126,7 @@ void MainWindow::selectOutputFolder()
 
     QString SelectedFolder = QFileDialog::getExistingDirectory(this, "Select output folder", MySettings.value(DEFAULT_OUTPUT_DIR_SETTINGS_KEY, DEFAULT_DEFAULT_OUTPUT_DIR).toString());
 
-    if (SelectedFolder == "")
-    {
+    if (SelectedFolder == "") {
         return;
     }
 
@@ -128,11 +139,9 @@ void MainWindow::selectOutputFolder()
     ui->lineEdit_selectOutputFolder->setText(folderName);
 }
 
-void MainWindow::resizeImage()
+void MainWindow::resizeImages()
 {
-
     if (outputFolder.isEmpty()) {
-
         QMessageBox::warning(this, tr("No output folder chosen"),
             tr("Please choose an output folder to proceed."));
         return;
@@ -148,42 +157,49 @@ void MainWindow::resizeImage()
     ui->pushButton_selectImages->setDisabled(true);
     ui->pushButton_selectOutputFolder->setDisabled(true);
     ui->actionImage_Extensions->setDisabled(true);
-    int i = 0;
-    ui->progressBar_converting->setValue(i);
+    ui->checkBox_convertToJPEG->setDisabled(true);
+    ui->checkBox_useInputFolder->setDisabled(true);
+    ui->checkBox_keepAspectRatio->setDisabled(true);
+    ui->spinBox_targetWidth->setDisabled(true);
+    ui->spinBox_targetHeight->setDisabled(true);
+    ui->spinBox_qualitySetting->setDisabled(true);
 
-    char *format = nullptr;
-    int quality = -1;
-    if (ui->checkBox_convertToJPEG->isChecked()) {
-        format = "JPEG";
-        quality = ui->spinBox_qualitySetting->value();
-    }
+    targetsDone = 0;
+    ui->progressBar_converting->setValue(0);
 
-    for (QString imagePath : inputImages) {
-        QImage *tempImage = new QImage(imagePath);
-        QFileInfo fi(imagePath);
-        QString fileName = fi.fileName();
+    QtConcurrent::run([this]() {
+        int i = 0;
+
+        char *format = nullptr;
+        int quality = -1;
         if (ui->checkBox_convertToJPEG->isChecked()) {
-            fileName = fi.completeBaseName() + ".jpg";
+            format = new char[20];
+            strcpy(format, "JPEG");
+            quality = ui->spinBox_qualitySetting->value();
         }
-        QString targetPath = outputFolder + QDir::separator() + fileName;
-        QImage resizedImage;
-        if (ui->checkBox_keepAspectRatio->isChecked()) {
-            resizedImage = tempImage->scaled(ui->spinBox_targetWidth->value(), ui->spinBox_targetHeight->value(), Qt::AspectRatioMode::KeepAspectRatio);
-        }
-        else {
-            resizedImage = tempImage->scaled(ui->spinBox_targetWidth->value(), ui->spinBox_targetHeight->value(), Qt::AspectRatioMode::IgnoreAspectRatio);
-        }
-        resizedImage.save(targetPath, format, quality);
-        qDebug() << i << " === " << imagePath;
-        delete tempImage;
-        ui->progressBar_converting->setValue(100*++i/inputImages.count());
-    }
 
-    ui->progressBar_converting->setVisible(false);
-    ui->pushButton_Resize->setDisabled(false);
-    ui->pushButton_selectImages->setDisabled(false);
-    ui->pushButton_selectOutputFolder->setDisabled(false);
-    ui->actionImage_Extensions->setDisabled(false);
+        for (QString imagePath : inputImages) {
+            QImage* tempImage = new QImage(imagePath);
+            QFileInfo fi(imagePath);
+            QString fileName = fi.fileName();
+            if (ui->checkBox_convertToJPEG->isChecked()) {
+                fileName = fi.completeBaseName() + ".jpg";
+            }
+            QString targetPath = outputFolder + QDir::separator() + fileName;
+            QImage resizedImage;
+            if (ui->checkBox_keepAspectRatio->isChecked()) {
+                resizedImage = tempImage->scaled(ui->spinBox_targetWidth->value(), ui->spinBox_targetHeight->value(), Qt::AspectRatioMode::KeepAspectRatio);
+            } else {
+                resizedImage = tempImage->scaled(ui->spinBox_targetWidth->value(), ui->spinBox_targetHeight->value(), Qt::AspectRatioMode::IgnoreAspectRatio);
+            }
+            resizedImage.save(targetPath, format, quality);
+            qDebug() << ++i << " === " << imagePath;
+            delete tempImage;
+            emit targetResized(inputImages.count());
+        }
+        emit resizeJobDone();
+    });
+
 }
 
 void MainWindow::toggleKeepAspectRatio(bool checked)
@@ -224,8 +240,33 @@ void MainWindow::onQualityChange(int quality)
 
 void MainWindow::optionsImageExtensionsSelect()
 {
-    ImageExtensionsSelectDialog *dialog = new ImageExtensionsSelectDialog(this);
+    ImageExtensionsSelectDialog* dialog = new ImageExtensionsSelectDialog(this);
 
     dialog->exec();
 }
 
+void MainWindow::endResizeJob()
+{
+    ui->progressBar_converting->setVisible(false);
+    ui->pushButton_Resize->setDisabled(false);
+    ui->pushButton_selectImages->setDisabled(false);
+    ui->pushButton_selectOutputFolder->setDisabled(false);
+    ui->actionImage_Extensions->setDisabled(false);
+    ui->checkBox_convertToJPEG->setDisabled(false);
+    ui->checkBox_useInputFolder->setDisabled(false);
+    ui->checkBox_keepAspectRatio->setDisabled(false);
+    ui->spinBox_targetWidth->setDisabled(false);
+    ui->spinBox_targetHeight->setDisabled(false);
+    ui->spinBox_qualitySetting->setDisabled(false);
+
+    // ui->label_status->setVisible(false);
+
+    ui->label_status->setText(QString::number(inputImages.count()) + " images have been processed.");
+}
+
+void MainWindow::resizeJobProgress(int totalTargets)
+{
+    ui->label_status->setVisible(true);
+    ui->progressBar_converting->setValue(100 * ++targetsDone / inputImages.count());
+    ui->label_status->setText(QString::number(targetsDone) + " of " + QString::number(totalTargets) + " processed.");
+}

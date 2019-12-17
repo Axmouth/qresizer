@@ -19,7 +19,7 @@ public:
 private slots:
     void selectImages();
     void selectOutputFolder();
-    void resizeImage();
+    void resizeImages();
     void toggleKeepAspectRatio(bool checked);
     void toggleConvertToJPEG(bool checked);
     void toggleUseInputFolder(bool checked);
@@ -27,10 +27,16 @@ private slots:
     void onWidthChange(int width);
     void onQualityChange(int quality);
     void optionsImageExtensionsSelect();
+    void endResizeJob();
+    void resizeJobProgress(int totalTargets);
 
 private:
     Ui::MainWindow *ui;
     QString outputFolder;
     QList<QString> inputImages;
+    int targetsDone = 0;
+signals:
+    void targetResized(int totalTargets);
+    void resizeJobDone();
 };
 #endif // MAINWINDOW_H
