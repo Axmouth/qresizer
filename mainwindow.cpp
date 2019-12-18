@@ -39,7 +39,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     QSettings MySettings;
     ui->lineEdit_selectOutputFolder->setText(MySettings.value(DEFAULT_OUTPUT_DIR_SETTINGS_KEY, DEFAULT_OUTPUT_DIR_SETTINGS_KEY).toString());
-    outputFolder = MySettings.value(DEFAULT_OUTPUT_DIR_SETTINGS_KEY, DEFAULT_OUTPUT_DIR_SETTINGS_KEY).toString();
+    outputFolder = MySettings.value(DEFAULT_OUTPUT_DIR_SETTINGS_KEY, DEFAULT_DEFAULT_OUTPUT_DIR).toString();
 
     ui->spinBox_targetWidth->setValue(MySettings.value(TARGET_HEIGHT_SETTINGS_KEY, DEFAULT_TARGET_HEIGHT).toInt());
     ui->spinBox_targetHeight->setValue(MySettings.value(TARGET_WIDTH_SETTINGS_KEY, DEFAULT_TARGET_WIDTH).toInt());
