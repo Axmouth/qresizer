@@ -137,6 +137,7 @@ void MainWindow::selectOutputFolder()
 
     QString folderName = SelectedFolder;
     ui->lineEdit_selectOutputFolder->setText(folderName);
+    outputFolder = folderName;
 }
 
 void MainWindow::resizeImages()
