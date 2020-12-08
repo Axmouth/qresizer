@@ -31,7 +31,9 @@ MainWindow::MainWindow(QWidget* parent)
     ui->setupUi(this);
 
     qRegisterMetaType<QList<QString>>("QList<QString>");
+#if QT_VERSION < 0x060000
     qRegisterMetaTypeStreamOperators<QList<QString>>("QList<QString>");
+#endif
 
     ui->lineEdit_selectImages->setReadOnly(true);
     ui->lineEdit_selectOutputFolder->setReadOnly(true);
